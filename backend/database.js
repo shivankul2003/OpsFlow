@@ -9,7 +9,7 @@ const db = new Database(dbPath);
 // Enable foreign-key checks
 db.pragma("foreign_keys = ON");
 
-// Create tables
+// Create tables and indexes
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,6 +54,17 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (work_item_id) REFERENCES work_items(id),
     FOREIGN KEY (actor_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS idempotency_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, idempotency_key),
+    FOREIGN KEY (user_id) REFERENCES users(id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_items_team_status

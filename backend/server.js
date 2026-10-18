@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("node:crypto");
 const db = require("./database");
 require("dotenv").config();
 
@@ -10,6 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
+app.use(cors());
+app.use(express.json());
 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -20,11 +23,8 @@ function authenticateToken(req, res, next) {
     });
   }
 
-  const token = authHeader.split(" ")[1];
-
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(authHeader.split(" ")[1], JWT_SECRET);
     next();
   } catch (error) {
     return res.status(401).json({
@@ -33,11 +33,6 @@ function authenticateToken(req, res, next) {
   }
 }
 
-
-app.use(cors());
-app.use(express.json());
-
-// Basic health check
 app.get("/", (req, res) => {
   res.json({
     message: "OpsFlow API is running!",
@@ -45,7 +40,6 @@ app.get("/", (req, res) => {
   });
 });
 
-// Login
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body || {};
 
@@ -73,7 +67,6 @@ app.post("/api/auth/login", (req, res) => {
   }
 
   if (!JWT_SECRET) {
-    console.error("JWT_SECRET is not configured.");
     return res.status(500).json({
       message: "Server authentication is not configured.",
     });
@@ -90,7 +83,7 @@ app.post("/api/auth/login", (req, res) => {
     { expiresIn: "2h" }
   );
 
-  res.json({
+  return res.json({
     message: "Login successful.",
     token,
     user: {
@@ -110,10 +103,8 @@ app.get("/api/auth/me", authenticateToken, (req, res) => {
   });
 });
 
-
 app.get("/api/work-items", authenticateToken, (req, res) => {
   const user = req.user;
-
   const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
   const limit = Math.min(
     50,
@@ -125,6 +116,7 @@ app.get("/api/work-items", authenticateToken, (req, res) => {
   const status = String(req.query.status || "").trim();
   const priority = String(req.query.priority || "").trim();
   const quickView = String(req.query.quickView || "all").trim();
+
   const conditions = ["wi.team_id = ?"];
   const params = [user.teamId];
 
@@ -144,23 +136,23 @@ app.get("/api/work-items", authenticateToken, (req, res) => {
   }
 
   if (quickView === "assigned") {
-  conditions.push("wi.assignee_id = ?");
-  params.push(user.id);
-}
-
-if (quickView === "urgent") {
-  conditions.push(
-    "wi.assignee_id IS NULL AND wi.priority IN ('High', 'Critical') AND wi.status NOT IN ('Resolved', 'Closed')"
-  );
-}
-
-if (quickView === "approval") {
-  if (user.role === "Lead") {
-    conditions.push("wi.status = 'Awaiting Approval'");
-  } else {
-    conditions.push("1 = 0");
+    conditions.push("wi.assignee_id = ?");
+    params.push(user.id);
   }
-}
+
+  if (quickView === "urgent") {
+    conditions.push(
+      "wi.assignee_id IS NULL AND wi.priority IN ('High', 'Critical') AND wi.status NOT IN ('Resolved', 'Closed')"
+    );
+  }
+
+  if (quickView === "approval") {
+    if (user.role === "Lead") {
+      conditions.push("wi.status = 'Awaiting Approval'");
+    } else {
+      conditions.push("1 = 0");
+    }
+  }
 
   const whereClause = conditions.join(" AND ");
 
@@ -182,8 +174,8 @@ if (quickView === "approval") {
       wi.created_at AS createdAt,
       wi.updated_at AS updatedAt
     FROM work_items wi
-LEFT JOIN users u_assignee ON u_assignee.id = wi.assignee_id
-LEFT JOIN users u_creator ON u_creator.id = wi.created_by
+    LEFT JOIN users u_assignee ON u_assignee.id = wi.assignee_id
+    LEFT JOIN users u_creator ON u_creator.id = wi.created_by
     WHERE ${whereClause}
     ORDER BY wi.updated_at DESC, wi.id DESC
     LIMIT ? OFFSET ?
@@ -195,7 +187,7 @@ LEFT JOIN users u_creator ON u_creator.id = wi.created_by
     WHERE ${whereClause}
   `).get(...params).total;
 
-  res.json({
+  return res.json({
     items,
     pagination: {
       page,
@@ -205,8 +197,6 @@ LEFT JOIN users u_creator ON u_creator.id = wi.created_by
     },
   });
 });
-
-
 
 app.post("/api/work-items", authenticateToken, (req, res) => {
   const {
@@ -258,6 +248,52 @@ app.post("/api/work-items", authenticateToken, (req, res) => {
     });
   }
 
+  const idempotencyKey = req.get("Idempotency-Key");
+
+  if (
+    idempotencyKey !== undefined &&
+    (!idempotencyKey.trim() || idempotencyKey.length > 128)
+  ) {
+    return res.status(400).json({
+      message: "Idempotency-Key must be between 1 and 128 characters.",
+    });
+  }
+
+  const requestHash = crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        title: title.trim(),
+        description,
+        type,
+        priority,
+        dueDate,
+      })
+    )
+    .digest("hex");
+
+  if (idempotencyKey !== undefined) {
+    const existingRequest = db.prepare(`
+      SELECT
+        request_hash AS requestHash,
+        response_json AS responseJson
+      FROM idempotency_keys
+      WHERE user_id = ? AND idempotency_key = ?
+    `).get(req.user.id, idempotencyKey);
+
+    if (existingRequest) {
+      if (existingRequest.requestHash !== requestHash) {
+        return res.status(409).json({
+          message: "Idempotency key was already used with a different request.",
+        });
+      }
+
+      return res.status(201).json(
+        JSON.parse(existingRequest.responseJson)
+      );
+    }
+  }
+
   const createItem = db.transaction(() => {
     const result = db.prepare(`
       INSERT INTO work_items
@@ -279,9 +315,13 @@ app.post("/api/work-items", authenticateToken, (req, res) => {
       INSERT INTO activity_events
         (work_item_id, actor_id, event_type, details)
       VALUES (?, ?, 'ITEM_CREATED', ?)
-    `).run(itemId, req.user.id, `Created work item: ${title.trim()}`);
+    `).run(
+      itemId,
+      req.user.id,
+      `Created work item: ${title.trim()}`
+    );
 
-    return db.prepare(`
+    const item = db.prepare(`
       SELECT
         id,
         title,
@@ -298,16 +338,63 @@ app.post("/api/work-items", authenticateToken, (req, res) => {
       FROM work_items
       WHERE id = ?
     `).get(itemId);
+
+    const responseBody = {
+      message: "Work item created successfully.",
+      item,
+    };
+
+    if (idempotencyKey !== undefined) {
+      db.prepare(`
+        INSERT INTO idempotency_keys
+          (user_id, idempotency_key, request_hash, response_json)
+        VALUES (?, ?, ?, ?)
+      `).run(
+        req.user.id,
+        idempotencyKey,
+        requestHash,
+        JSON.stringify(responseBody)
+      );
+    }
+
+    return responseBody;
   });
 
-  const item = createItem();
+  try {
+    const responseBody = createItem();
+    return res.status(201).json(responseBody);
+  } catch (error) {
+    if (
+      idempotencyKey !== undefined &&
+      error.code === "SQLITE_CONSTRAINT_UNIQUE"
+    ) {
+      const existingRequest = db.prepare(`
+        SELECT
+          request_hash AS requestHash,
+          response_json AS responseJson
+        FROM idempotency_keys
+        WHERE user_id = ? AND idempotency_key = ?
+      `).get(req.user.id, idempotencyKey);
 
-  res.status(201).json({
-    message: "Work item created successfully.",
-    item,
-  });
+      if (existingRequest) {
+        if (existingRequest.requestHash !== requestHash) {
+          return res.status(409).json({
+            message: "Idempotency key was already used with a different request.",
+          });
+        }
+
+        return res.status(201).json(
+          JSON.parse(existingRequest.responseJson)
+        );
+      }
+    }
+
+    console.error("Failed to create work item:", error);
+    return res.status(500).json({
+      message: "Could not create work item.",
+    });
+  }
 });
-
 
 app.patch("/api/work-items/:id/status", authenticateToken, (req, res) => {
   const itemId = Number.parseInt(req.params.id, 10);
@@ -373,10 +460,7 @@ app.patch("/api/work-items/:id/status", authenticateToken, (req, res) => {
     });
   }
 
-  if (
-    status === "Resolved" &&
-    user.role !== "Lead"
-  ) {
+  if (status === "Resolved" && user.role !== "Lead") {
     return res.status(403).json({
       message: "Only a Lead can approve and resolve a work item.",
     });
@@ -414,7 +498,7 @@ app.patch("/api/work-items/:id/status", authenticateToken, (req, res) => {
     });
   }
 
-  res.json({
+  return res.json({
     message: "Work item status updated successfully.",
     item: {
       id: item.id,
@@ -425,7 +509,6 @@ app.patch("/api/work-items/:id/status", authenticateToken, (req, res) => {
     },
   });
 });
-
 
 app.post("/api/work-items/:id/claim", authenticateToken, (req, res) => {
   const itemId = Number.parseInt(req.params.id, 10);
@@ -439,16 +522,19 @@ app.post("/api/work-items/:id/claim", authenticateToken, (req, res) => {
 
   const claimItem = db.transaction(() => {
     const item = db.prepare(`
-      SELECT id, title, status, team_id AS teamId, assignee_id AS assigneeId, version
+      SELECT
+        id,
+        title,
+        status,
+        team_id AS teamId,
+        assignee_id AS assigneeId,
+        version
       FROM work_items
       WHERE id = ?
     `).get(itemId);
 
     if (!item || item.teamId !== user.teamId) {
-      return {
-        error: 404,
-        message: "Work item not found.",
-      };
+      return { error: 404, message: "Work item not found." };
     }
 
     if (item.status === "Closed" || item.status === "Resolved") {
@@ -513,7 +599,6 @@ app.post("/api/work-items/:id/claim", authenticateToken, (req, res) => {
   });
 });
 
-
 app.get("/api/work-items/:id/activity", authenticateToken, (req, res) => {
   const itemId = Number.parseInt(req.params.id, 10);
   const user = req.user;
@@ -557,8 +642,6 @@ app.get("/api/work-items/:id/activity", authenticateToken, (req, res) => {
   });
 });
 
-
-// Start server
 app.listen(PORT, () => {
   console.log(`OpsFlow backend running at http://localhost:${PORT}`);
 });
