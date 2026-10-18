@@ -1,0 +1,30 @@
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# SQLite database
+backend/opsflow.db
+backend/*.db-shm
+backend/*.db-wal
+
+# Temporary authentication test files
+login.json
+auth-test.txt
+
+# Build output
+frontend/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.vscode/
