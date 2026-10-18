@@ -1,5 +1,5 @@
 
-const { test, before, after } = require("node:test");
+const { test, before } = require("node:test");
 const assert = require("node:assert/strict");
 
 const BASE_URL = "http://localhost:5000/api";
@@ -28,13 +28,16 @@ async function api(path, token, options = {}) {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.body
+        ? { "Content-Type": "application/json" }
+        : {}),
       ...options.headers,
     },
   });
 
   const text = await response.text();
   let data = {};
+
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
@@ -75,6 +78,7 @@ test("A team can only list its own work items", async () => {
   const leakedItem = result.data.items.some(
     (item) => item.id === createdItemId
   );
+
   assert.equal(leakedItem, false);
 });
 
@@ -83,6 +87,7 @@ test("Cross-team item access is denied", async () => {
     `/work-items/${createdItemId}/activity`,
     engineeringLeadToken
   );
+
   assert.equal(result.status, 404);
 });
 
@@ -92,9 +97,13 @@ test("A Member cannot approve a work item", async () => {
     operationsLeadToken,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "In Progress", version: 1 }),
+      body: JSON.stringify({
+        status: "In Progress",
+        version: 1,
+      }),
     }
   );
+
   assert.equal(moveToProgress.status, 200);
 
   const requestApproval = await api(
@@ -108,6 +117,7 @@ test("A Member cannot approve a work item", async () => {
       }),
     }
   );
+
   assert.equal(requestApproval.status, 200);
 
   const approval = await api(
@@ -115,9 +125,13 @@ test("A Member cannot approve a work item", async () => {
     operationsMemberToken,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "Resolved", version: 3 }),
+      body: JSON.stringify({
+        status: "Resolved",
+        version: 3,
+      }),
     }
   );
+
   assert.equal(approval.status, 403);
 });
 
@@ -127,7 +141,10 @@ test("Stale version updates are rejected", async () => {
     operationsLeadToken,
     {
       method: "PATCH",
-      body: JSON.stringify({ status: "In Progress", version: 1 }),
+      body: JSON.stringify({
+        status: "In Progress",
+        version: 1,
+      }),
     }
   );
 
@@ -143,4 +160,32 @@ test("Activity history is available to the item's team", async () => {
   assert.equal(result.status, 200);
   assert.ok(result.data.total >= 1);
   assert.ok(Array.isArray(result.data.activities));
+});
+
+test("Concurrent claims allow only one user to claim an item", async () => {
+  const createResult = await api("/work-items", operationsLeadToken, {
+    method: "POST",
+    body: JSON.stringify({
+      title: `Concurrent claim test ${Date.now()}`,
+      description: "Temporary item for concurrent claim testing.",
+      type: "Task",
+      priority: "High",
+    }),
+  });
+
+  assert.equal(createResult.status, 201);
+  const itemId = createResult.data.item.id;
+
+  const [firstClaim, secondClaim] = await Promise.all([
+    api(`/work-items/${itemId}/claim`, operationsMemberToken, {
+      method: "POST",
+    }),
+    api(`/work-items/${itemId}/claim`, operationsLeadToken, {
+      method: "POST",
+    }),
+  ]);
+
+  const statuses = [firstClaim.status, secondClaim.status].sort();
+
+  assert.deepEqual(statuses, [200, 409]);
 });
