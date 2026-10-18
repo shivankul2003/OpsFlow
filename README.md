@@ -100,9 +100,10 @@ Start the backend first, then run this command from the project root:
 node --test tests/api.test.js
 ```
 
-The API tests cover authentication, team isolation, role-based approval, stale updates, activity history, and concurrent claims.
+The API tests cover authentication, team isolation, role-based approval, stale updates, activity history, concurrent claims, and idempotent creation (including conflicting reuse of an idempotency key).
 
 ## Project Structure
+
 
 ```text
 OpsFlow/
@@ -125,4 +126,3 @@ OpsFlow/
 - SQLite is suitable for this local demonstration, but production use would require evaluating database concurrency, backups, monitoring, and scaling.
 - Automated tests cover key authorization, workflow, stale-version, activity-history, and concurrent-claim behaviours. Additional edge cases and broader test coverage remain possible.
 - The application has not undergone a formal security audit and is intended as a demonstration project, not a production-ready deployment.
-- The current test suite does not yet document dedicated automated coverage for idempotent creation.
