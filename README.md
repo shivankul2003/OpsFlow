@@ -96,9 +96,9 @@ When creating a work item, clients can supply an `Idempotency-Key` header to saf
 
 Start the backend first, then run this command from the project root:
 
-```bash
-node --test tests/api.test.js
-```
+npm test
+
+
 
 The API tests cover authentication, team isolation, role-based approval, stale updates, activity history, concurrent claims, and idempotent creation (including conflicting reuse of an idempotency key).
 
