@@ -189,3 +189,52 @@ test("Concurrent claims allow only one user to claim an item", async () => {
 
   assert.deepEqual(statuses, [200, 409]);
 });
+
+test("Idempotent creation returns the same item for retries", async () => {
+  const idempotencyKey = `idempotency-test-${Date.now()}`;
+
+  const requestBody = {
+    title: `Idempotency test ${Date.now()}`,
+    description: "Testing safe retries of work-item creation.",
+    type: "Task",
+    priority: "Medium",
+  };
+
+  const firstRequest = await api("/work-items", operationsLeadToken, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(requestBody),
+  });
+
+  assert.equal(firstRequest.status, 201);
+  assert.ok(firstRequest.data.item.id);
+
+  const retryRequest = await api("/work-items", operationsLeadToken, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(requestBody),
+  });
+
+  assert.equal(retryRequest.status, 201);
+  assert.equal(
+    retryRequest.data.item.id,
+    firstRequest.data.item.id,
+    "Retry should return the original item, not create a duplicate"
+  );
+
+  const conflictingRequest = await api("/work-items", operationsLeadToken, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({
+      ...requestBody,
+      title: "Different title using the same key",
+    }),
+  });
+
+  assert.equal(
+    conflictingRequest.status,
+    409,
+    "Reusing the same key with a different request should be rejected"
+  );
+});
+
