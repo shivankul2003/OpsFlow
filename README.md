@@ -126,3 +126,27 @@ OpsFlow/
 - SQLite is suitable for this local demonstration, but production use would require evaluating database concurrency, backups, monitoring, and scaling.
 - Automated tests cover key authorization, workflow, stale-version, activity-history, and concurrent-claim behaviours. Additional edge cases and broader test coverage remain possible.
 - The application has not undergone a formal security audit and is intended as a demonstration project, not a production-ready deployment.
+
+
+## Application Screenshots
+
+The following screenshots show the OpsFlow application interface and workflow.
+
+### Screenshot 1
+![OpsFlow screenshot 1](docs/screenshots/screenshot-1.jpeg)
+
+### Screenshot 2
+![OpsFlow screenshot 2](docs/screenshots/screenshot-2.jpeg)
+
+### Screenshot 3
+![OpsFlow screenshot 3](docs/screenshots/screenshot-3.jpeg)
+
+### Screenshot 4
+![OpsFlow screenshot 4](docs/screenshots/screenshot-4.jpeg)
+
+### Screenshot 5
+![OpsFlow screenshot 5](docs/screenshots/screenshot-5.jpeg)
+
+## Architecture
+
+See [Architecture Diagram](docs/architecture.md) for the application components and their relationships.
